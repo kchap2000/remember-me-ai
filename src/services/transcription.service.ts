@@ -38,13 +38,14 @@ class TranscriptionService {
   private validateApiKey() {
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
     if (!apiKey?.trim()) {
-      throw new Error(this.ERROR_MESSAGES.API_KEY_MISSING);
+      console.error('OpenAI API key is missing');
+      throw new Error('Voice recording is not available - missing API key');
     }
   }
 
   private validateAudioFormat(blob: Blob): void {
     if (!blob) {
-      throw new Error('No audio data received');
+      throw new Error('No audio recorded. Please try again.');
     }
 
     if (!this.SUPPORTED_FORMATS.includes(blob.type)) {
@@ -56,7 +57,7 @@ class TranscriptionService {
     }
 
     if (blob.size === 0) {
-      throw new Error('Empty audio recording. Please try again.');
+      throw new Error('No audio detected. Please try speaking and record again.');
     }
   }
 

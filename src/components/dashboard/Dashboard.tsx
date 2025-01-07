@@ -49,6 +49,7 @@ export function Dashboard() {
 
       try {
         const userStories = await firebaseService.getUserStories(currentUser.uid);
+        console.log('Fetched stories:', userStories);
         setStories(userStories);
         
         // Organize stories by phase
@@ -77,7 +78,7 @@ export function Dashboard() {
     }
 
     fetchStories();
-  }, [currentUser]); // Added missing dependency array
+  }, [currentUser, location.pathname]); // Re-fetch when route changes
 
   const handleNewStory = () => {
     if (!currentUser) {

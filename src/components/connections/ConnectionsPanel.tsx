@@ -25,12 +25,12 @@ export function ConnectionsPanel({
   const [showAddModal, setShowAddModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
 
   // Get store functions
   const { 
     connections,
-    selectedConnection,
-    setSelectedConnection,
+    storyConnections,
     fetchUserConnections,
     fetchStoryConnections
   } = useConnectionsStore();
@@ -97,7 +97,7 @@ export function ConnectionsPanel({
           />
         ) : (
           <ConnectionsList
-            connections={connections}
+            connections={storyId ? storyConnections : connections}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
             onSelectConnection={setSelectedConnection}
@@ -122,12 +122,18 @@ export function ConnectionsPanel({
       </div>
 
       {/* Add Connection Modal */}
-      <AddConnectionModal
-        isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        userId={userId}
-        onAdd={handleAddConnection}
-      />
+      {showAddModal && (
+        <AddConnectionModal
+          isOpen={showAddModal}
+          onClose={() => setShowAddModal(false)}
+          onAdd={handleAddConnection}
+          userId={userId}
+          content=""
+          storyId={storyId || ''}
+          storyTitle=""
+          selectedYear={new Date().getFullYear()}
+        />
+      )}
     </Card>
   );
 }

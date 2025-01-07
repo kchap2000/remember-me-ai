@@ -1,7 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Mic, Square, AlertCircle, Loader2 } from 'lucide-react';
 import { transcriptionService } from '../../services/transcription.service';
-import { PROMPT_TEMPLATES } from '../../config/ai.config';
 import { aiService } from '../../services/ai.service';
 import type { TranscriptionProgress } from '../../types';
 
@@ -51,35 +50,54 @@ export function VoiceRecorder({ onTranscription, className = '' }: VoiceRecorder
           setIsProcessing(true);
           setError(null);
 
+          console.log('Starting transcription for audioBlob:', audioBlob);
+
           // Step 1: Transcribe audio
           const result = await transcriptionService.transcribeLongAudio(
             audioBlob,
             { language: 'en' },
             handleProgress
           );
-          
-          // Step 2: Clean transcription
-          setIsAnalyzing(true);
-          const cleaned = await aiService.cleanTranscription(result);
-          if (!cleaned.success) {
-            throw new Error(cleaned.error || 'Failed to clean transcription');
+
+          if (!result?.trim()) {
+            throw new Error('Transcription failed or returned invalid data');
           }
-          
-          // Step 3: Get story prompts
-          const enhanced = await aiService.editText(cleaned.text, {
-            temperature: 0.7
-          });
+          console.log('Transcription successful');
+
+          // Step 2: Clean transcription
+          let finalText = result;
+          try {
+            const cleaned = await aiService.cleanTranscription(result);
+            if (cleaned && cleaned.success) {
+              finalText = cleaned.text;
+              console.log('Text cleaning successful');
+            } else {
+              console.warn('Transcription cleaning failed:', cleaned?.error);
+            }
+          } catch (cleanError) {
+            console.error('Error during cleaning:', cleanError);
+          }
+
+          // Step 3: Enhance text (Optional)
+          try {
+            const enhanced = await aiService.editText(finalText, { temperature: 0.7 });
+            if (enhanced && enhanced.success) {
+              finalText = enhanced.text;
+              console.log('Text enhancement successful');
+            } else {
+              console.warn('Text enhancement failed:', enhanced?.error);
+            }
+          } catch (enhanceError) {
+            console.error('Error during enhancement:', enhanceError);
+          }
 
           // Step 4: Present results
-          const finalText = enhanced.success
-            ? `${cleaned.text}\n\n${enhanced.text}`
-            : cleaned.text;
-
           onTranscription(finalText);
         } catch (error: any) {
           const errorMessage = error.message?.includes('API key')
-            ? 'Voice recording is currently unavailable'
+            ? 'Voice recording is not configured. Please check OpenAI API key.'
             : error.message || 'Failed to transcribe audio';
+          console.error('Transcription error:', errorMessage);
           setError(errorMessage);
         } finally {
           setIsProcessing(false);
@@ -94,6 +112,7 @@ export function VoiceRecorder({ onTranscription, className = '' }: VoiceRecorder
       const errorMessage = error.name === 'NotAllowedError'
         ? 'Microphone access denied. Please allow microphone access to record.'
         : 'Could not access microphone';
+      console.error('Recording Error:', error);
       setError(errorMessage);
     }
   }, [handleProgress, onTranscription]);

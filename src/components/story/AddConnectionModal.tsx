@@ -1,42 +1,110 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, UserPlus, Clock, ChevronRight } from 'lucide-react';
 import { useConnectionsStore } from '../../store/useConnectionsStore';
-import { Connection } from '../../types';
+import type { Connection } from '../../types';
+import { connectionsService } from '../../services/connections.service';
 
 interface AddConnectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onAdd: (connection: { name: string; relationship: string }) => void;
   userId?: string;
+  content: string;
+  storyId: string;
+  storyTitle: string;
+  selectedYear: number;
 }
 
-export function AddConnectionModal({ isOpen, onClose, onAdd, userId }: AddConnectionModalProps) {
+export function AddConnectionModal({ 
+  isOpen, 
+  onClose, 
+  onAdd, 
+  userId, 
+  content,
+  storyId,
+  storyTitle,
+  selectedYear 
+}: AddConnectionModalProps) {
   const [name, setName] = useState('');
   const [relationship, setRelationship] = useState('');
+  const [filteredSuggestions, setFilteredSuggestions] = useState<Connection[]>([]);
   const [showAllRecent, setShowAllRecent] = useState(false);
+  const [detectedConnections, setDetectedConnections] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const { connections: recentConnections } = useConnectionsStore();
-  
+
+  // Filter suggestions as user types
+  useEffect(() => {
+    if (!name.trim()) {
+      setFilteredSuggestions([]);
+      return;
+    }
+    
+    const lowerName = name.trim().toLowerCase();
+    const matches = recentConnections.filter(
+      conn => conn.name.toLowerCase().includes(lowerName)
+    );
+    
+    setFilteredSuggestions(matches);
+  }, [name, recentConnections]);
+
   const commonRelationships = [
     'Mother', 'Father', 'Sister', 'Brother', 'Friend', 
     'Teacher', 'Boss', 'Colleague', 'Aunt', 'Uncle'
   ];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    const fetchDetectedConnections = async () => {
+      if (content?.trim() && userId) {
+        try {
+          const connections = await connectionsService.detectConnectionsInContent(content, userId);
+          setDetectedConnections(connections);
+        } catch (error) {
+          console.error('Error detecting connections:', error);
+          setDetectedConnections([]);
+        }
+      }
+    };
+
+    fetchDetectedConnections();
+  }, [content, userId]);
+
+  const handleRecentConnectionClick = (connection: Connection) => {
+    try {
+      onAdd({
+        name: connection.name,
+        relationship: connection.relationship
+      });
+      onClose();
+    } catch (error) {
+      console.error('Error adding recent connection:', error);
+      setError('Failed to add connection');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     const trimmedName = name?.trim();
     const trimmedRelationship = relationship?.trim();
-    
-    if (!trimmedName || !trimmedRelationship) {
+
+    if (!trimmedName || !trimmedRelationship || !userId || !storyId) {
       return;
     }
-    
-    onAdd({ 
-      name: trimmedName,
-      relationship: trimmedRelationship
-    });
-    setName('');
-    setRelationship('');
-    onClose();
+
+    try {
+      onAdd({ 
+        name: trimmedName,
+        relationship: trimmedRelationship
+      });
+
+      setName('');
+      setRelationship('');
+      onClose();
+    } catch (error) {
+      console.error('Error handling connection:', error);
+      setError('Failed to add connection');
+    }
   };
 
   if (!isOpen) return null;
@@ -55,7 +123,47 @@ export function AddConnectionModal({ isOpen, onClose, onAdd, userId }: AddConnec
           <UserPlus className="text-[#3b19e6]" size={24} />
           <h2 className="text-xl font-bold text-white">Add Connection</h2>
         </div>
-        
+
+        {error && (
+          <div className="mb-4 text-red-500 text-sm">
+            {error}
+          </div>
+        )}
+
+        {detectedConnections.length > 0 && (
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-[#a29db8]">
+                <Clock size={16} />
+                <span className="text-sm">Detected Connections</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {detectedConnections.map((connection, index) => (
+                <button
+                  key={index}
+                  onClick={() => {
+                    onAdd({
+                      name: connection,
+                      relationship: 'Unknown'
+                    });
+                    onClose();
+                  }}
+                  className="w-full p-2 bg-[#2b2938] rounded-lg text-left hover:bg-[#343048] 
+                           transition-colors group flex items-center justify-between"
+                >
+                  <div>
+                    <span className="text-white block">{connection}</span>
+                    <span className="text-[#a29db8] text-sm">Unknown</span>
+                  </div>
+                  <ChevronRight size={16} className="text-[#3b19e6] opacity-0 group-hover:opacity-100 
+                                                   transition-opacity" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {recentConnections.length > 0 && (
           <div className="mb-6">
             <div className="flex items-center justify-between mb-3">
@@ -78,13 +186,7 @@ export function AddConnectionModal({ isOpen, onClose, onAdd, userId }: AddConnec
               {(showAllRecent ? recentConnections : recentConnections.slice(0, 3)).map((connection) => (
                 <button
                   key={connection.id}
-                  onClick={() => {
-                    onAdd({
-                      name: connection.name,
-                      relationship: connection.relationship
-                    });
-                    onClose();
-                  }}
+                  onClick={() => handleRecentConnectionClick(connection)}
                   className="w-full p-2 bg-[#2b2938] rounded-lg text-left hover:bg-[#343048] 
                            transition-colors group flex items-center justify-between"
                 >
@@ -115,6 +217,39 @@ export function AddConnectionModal({ isOpen, onClose, onAdd, userId }: AddConnec
               required
             />
           </div>
+          
+          {/* Autocomplete Suggestions */}
+          {filteredSuggestions.length > 0 && (
+            <div className="mt-1 bg-[#2b2938] border border-[#403c53] rounded-lg 
+                          max-h-48 overflow-y-auto">
+              {filteredSuggestions.map(conn => (
+                <button
+                  key={conn.id}
+                  onClick={() => {
+                    onAdd({ 
+                      name: conn.name, 
+                      relationship: conn.relationship 
+                    });
+                    onClose();
+                  }}
+                  className="w-full text-left px-4 py-2 hover:bg-[#343048] 
+                           flex items-center justify-between group"
+                >
+                  <div>
+                    <span className="text-white">{conn.name}</span>
+                    <span className="text-[#a29db8] text-sm ml-2">
+                      {conn.relationship}
+                    </span>
+                  </div>
+                  <ChevronRight 
+                    size={16} 
+                    className="text-[#3b19e6] opacity-0 group-hover:opacity-100 
+                             transition-opacity"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm text-[#a29db8] mb-2">

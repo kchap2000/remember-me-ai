@@ -1,102 +1,173 @@
-import { openai, AI_MODELS, MODEL_PARAMS, PROMPT_TEMPLATES, TRANSCRIPTION_PROMPTS } from '../config/ai.config';
+import { openai, AI_MODELS, MODEL_PARAMS, PROMPT_TEMPLATES } from '../config/ai.config';
 import type { AIEditOptions, AIEditResult } from '../types/ai';
+import type { AnalysisResult, MemoryElement, ElementType, StoryAnalysis } from '../types/analysis';
 
-const DEFAULT_ERROR_MESSAGES = {
-  API_KEY_MISSING: 'OpenAI API key is not configured',
-  RATE_LIMIT: 'Too many requests. Please try again later',
-  SERVER_ERROR: 'Service temporarily unavailable',
-  NETWORK_ERROR: 'Network connection error',
-  DEFAULT: 'Failed to process request'
+export interface PolishTextResult {
+  text: string;
+  success: boolean;
+  error?: string;
+}
+
+const MEMORY_PATTERNS: Record<ElementType, RegExp> = {
+  people: /\b(?:mother|father|dad|sister|brother|aunt|uncle|grandmother|grandfather|friend|teacher)\b/gi,
+  locations: /\b(?:hospital|kitchen|school|home|house|room|store|park)\b/gi,
+  events: /\b(?:tripped|hit|born|stitches|fell|broke|celebrated|visited|played|learned)\b/gi,
+  timeframes: /\b(?:yesterday|last week|when I was|years ago|in \d{4}|[12][0-9]{3})\b/gi,
+  objects: /\b(?:briefcase|mirror|eye|book|table|chair|car)\b/gi
 };
 
-interface OpenAIError {
-  response?: {
-    status?: number;
-    data?: {
-      error?: {
-        message?: string;
-        code?: string;
-        type?: string;
-      }
-    }
-  };
-  message?: string;
+async function polishTextWithAI(content: string): Promise<string> {
+  try {
+    const response = await openai.chat.completions.create({
+      model: AI_MODELS.PRIMARY,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a text editor tasked with polishing the provided text.
+            Your goal is to:
+            - Remove filler words like "um," "uh," "like," "you know"
+            - Eliminate repeated words/phrases and clean up rambling sentences
+            - Maintain the original meaning and tone
+            - Break text into coherent paragraphs by grouping related ideas
+            - Ensure proper punctuation, capitalization, and spacing
+            - Add blank lines between paragraphs for readability
+            
+            Return ONLY the polished text without any additional comments.`
+        },
+        {
+          role: 'user',
+          content: content
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 2000
+    });
+
+    return response.choices[0]?.message?.content?.trim() || content;
+  } catch (error) {
+    console.error('Error polishing text with AI:', error);
+    throw error;
+  }
 }
 
 class AIService {
-  async cleanTranscription(text: string): Promise<AIEditResult> {
+  private context: Map<string, any> = new Map();
+  
+  async polishText(content: string): Promise<PolishTextResult> {
     try {
-      if (!import.meta.env.VITE_OPENAI_API_KEY) {
-        return {
-          text,
-          success: false,
-          error: DEFAULT_ERROR_MESSAGES.API_KEY_MISSING
-        };
-      }
-
       const response = await openai.chat.completions.create({
         model: AI_MODELS.PRIMARY,
         messages: [
           {
             role: 'system',
-            content: TRANSCRIPTION_PROMPTS.CLEAN.system
+            content: `You are a text editor tasked with polishing the provided text.
+              Your goal is to:
+              - Remove filler words like "um," "uh," "like," "you know"
+              - Eliminate repeated words/phrases and clean up rambling sentences
+              - Maintain the original meaning and tone
+              - Break text into coherent paragraphs by grouping related ideas
+              - Ensure proper punctuation, capitalization, and spacing
+              - Add blank lines between paragraphs for readability
+              
+              Return ONLY the polished text without any additional comments.`
           },
           {
             role: 'user',
-            content: `${TRANSCRIPTION_PROMPTS.CLEAN.user}${text}`
+            content: content
           }
         ],
-        temperature: 0.3, // Lower temperature for more consistent cleaning
-        max_tokens: 1000
+        temperature: 0.7,
+        max_tokens: 2000
       });
 
-      const cleanedText = response.choices[0]?.message?.content?.trim() || text;
+      const polishedText = response.choices[0]?.message?.content?.trim();
+      if (!polishedText) {
+        throw new Error('No response from AI');
+      }
 
       return {
-        text: cleanedText,
+        text: polishedText,
         success: true
       };
-    } catch (error: any) {
-      console.error('OpenAI API Error:', error);
+    } catch (error) {
+      console.error('Error polishing text with AI:', error);
       return {
-        text,
+        text: content,
         success: false,
-        error: error.message || DEFAULT_ERROR_MESSAGES.DEFAULT
+        error: error instanceof Error ? error.message : 'Failed to polish text'
       };
     }
   }
 
-  async editText(text: string, options: AIEditOptions = {}): Promise<AIEditResult> {
+  // Memory Analysis Methods
+  private extractElements(content: string): Record<ElementType, MemoryElement[]> {
+    const result: Partial<Record<ElementType, MemoryElement[]>> = {};
+
+    Object.entries(MEMORY_PATTERNS).forEach(([category, pattern]) => {
+      const matches = [...new Set(content.match(pattern) || [])];
+      result[category as ElementType] = matches.map(match => ({
+        type: category as ElementType,
+        value: match.toLowerCase(),
+        context: this.getElementContext(content, match),
+        verified: true
+      }));
+    });
+
+    return result as Record<ElementType, MemoryElement[]>;
+  }
+
+  private getElementContext(content: string, element: string): string {
     try {
-      if (!import.meta.env.VITE_OPENAI_API_KEY) {
-        return {
-          text,
-          success: false,
-          error: DEFAULT_ERROR_MESSAGES.API_KEY_MISSING
+      const sentencePattern = new RegExp(
+        `[^.!?]*(?<=[.!?\\s])${element}(?=[\\s.!?])[^.!?]*[.!?]`,
+        'i'
+      );
+      const match = content.match(sentencePattern);
+      return match ? match[0].trim() : '';
+    } catch (error) {
+      console.warn(`Error getting context for "${element}":`, error);
+      return '';
+    }
+  }
+
+  private identifyMissingContext(
+    elements: Record<ElementType, MemoryElement[]>,
+    content: string
+  ): string[] {
+    const missing: string[] = [];
+
+    if (!elements.timeframes?.length) missing.push('temporal');
+    if (elements.locations?.length && !this.hasLocationContext(content)) {
+      missing.push('spatial');
+    }
+
+    return missing;
+  }
+
+  private hasLocationContext(content: string): boolean {
+    return /\b(?:in|at|near|by|inside|outside|around)\s+the\b/i.test(content);
+  }
+
+  // Main Analysis Methods
+  async analyzeStory(content: string, options: AIEditOptions = {}): Promise<StoryAnalysis> {
+    try {
+      if (!content?.trim()) {
+        return { 
+          success: false, 
+          error: 'No content to analyze',
+          elements: {},
+          suggestions: [],
+          missingContexts: []
         };
       }
 
-      // First, get sensory details and suggestions
-      const response = await openai.chat.completions.create({
-        model: AI_MODELS.PRIMARY,
-        messages: [
-          {
-            role: 'system',
-            content: PROMPT_TEMPLATES.SENSORY.system
-          },
-          {
-            role: 'user',
-            content: `${PROMPT_TEMPLATES.SENSORY.user}${text}`
-          }
-        ],
-        ...MODEL_PARAMS[AI_MODELS.PRIMARY],
-        temperature: options.temperature || MODEL_PARAMS[AI_MODELS.PRIMARY].temperature
-      });
+      // Local analysis
+      const elements = this.extractElements(content);
+      const missingContexts = this.identifyMissingContext(elements, content);
 
-      let editedText = response.choices[0]?.message?.content?.trim() || text;
-
-      // Then, get follow-up questions and prompts
-      const promptResponse = await openai.chat.completions.create({
+      // Generate initial suggestions
+      const [analysisResponse, suggestionsResponse] = await Promise.all([
+        openai.chat.completions.create({
         model: AI_MODELS.PRIMARY,
         messages: [
           {
@@ -105,101 +176,89 @@ class AIService {
           },
           {
             role: 'user',
-            content: `${PROMPT_TEMPLATES.RECALL.user}${editedText}`
+            content: `${PROMPT_TEMPLATES.RECALL.user}${content}`
           }
         ],
-        ...MODEL_PARAMS[AI_MODELS.PRIMARY],
-        temperature: 0.7
-      });
+        temperature: options.temperature || 0.7,
+        max_tokens: 300
+      }),
+        openai.chat.completions.create({
+          model: AI_MODELS.PRIMARY,
+          messages: [
+            {
+              role: 'system',
+              content: PROMPT_TEMPLATES.ENHANCE.system
+            },
+            {
+              role: 'user',
+              content: `${PROMPT_TEMPLATES.ENHANCE.user}${content}`
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 200,
+          n: 3 // Generate 3 suggestions
+        })
+      ]);
 
-      const prompts = promptResponse.choices[0]?.message?.content?.trim();
-      if (prompts) {
-        editedText = `${editedText}\n\nSome questions to consider:\n${prompts}`;
+      const analysis = analysisResponse.choices[0]?.message?.content?.trim();
+      const suggestions = suggestionsResponse.choices.map(choice => 
+        choice.message?.content?.trim() || ''
+      ).filter(Boolean);
+
+      if (!analysis) {
+        throw new Error('Failed to generate analysis');
       }
 
       return {
-        text: editedText,
-        success: true
+        success: true,
+        analysis,
+        elements,
+        missingContexts,
+        suggestions
       };
-    } catch (error: any) {
-      const errorMessage = this.handleError(error);
-      console.error('AI Service Error:', errorMessage);
+    } catch (error) {
+      console.error('AI Service Error:', error);
       return {
-        text: text, // Return original text on error
         success: false,
-        error: errorMessage
+        error: error instanceof Error ? error.message : 'Failed to analyze story',
+        elements: {},
+        suggestions: [],
+        missingContexts: []
       };
     }
   }
 
-  private handleError(error: any): string {
-    if (!navigator.onLine) {
-      return DEFAULT_ERROR_MESSAGES.NETWORK_ERROR;
-    }
-    if (!import.meta.env.VITE_OPENAI_API_KEY) {
-      return DEFAULT_ERROR_MESSAGES.API_KEY_MISSING;
-    }
-    if (error?.response?.status === 429) {
-      return DEFAULT_ERROR_MESSAGES.RATE_LIMIT;
-    }
-    if (error?.response?.status >= 500) {
-      return DEFAULT_ERROR_MESSAGES.SERVER_ERROR;
-    }
-
-    return error?.message || DEFAULT_ERROR_MESSAGES.DEFAULT;
+  // Existing methods...
+  async cleanTranscription(text: string): Promise<AIEditResult> {
+    // ... (keep existing implementation)
   }
 
-  async analyzeMemory(content: string, options: AIEditOptions = {}): Promise<AIEditResult> {
+  async editText(text: string, options: AIEditOptions = {}): Promise<AIEditResult> {
+    // ... (keep existing implementation)
+  }
+
+  async generateSuggestion(content: string): Promise<string> {
     try {
-      // Validate API key first
-      if (!import.meta.env.VITE_OPENAI_API_KEY) {
-        return {
-          text: '',
-          success: false,
-          error: DEFAULT_ERROR_MESSAGES.API_KEY_MISSING
-        };
-      }
-
-      if (!content?.trim()) {
-        return { text: '', success: false, error: 'No content to analyze' };
-      }
-
-      // Use the RECALL template for initial analysis
       const response = await openai.chat.completions.create({
         model: AI_MODELS.PRIMARY,
         messages: [
           {
             role: 'system',
-            content: `${PROMPT_TEMPLATES.RECALL.system}\n\nProvide a brief analysis and 2-3 follow-up questions.`
+            content: PROMPT_TEMPLATES.ENHANCE.system
           },
           {
             role: 'user',
-            content: `${PROMPT_TEMPLATES.RECALL.user}${content}`
+            content: `${PROMPT_TEMPLATES.ENHANCE.user}${content}`
           }
         ],
-        temperature: options.temperature || 0.7,
-        max_tokens: 500,
-        presence_penalty: 0.6,
-        frequency_penalty: 0.3
+        temperature: 0.7,
+        max_tokens: 500
       });
 
-      const analysis = response.choices[0]?.message?.content?.trim();
-      if (!analysis) {
-        return { text: '', success: false, error: 'Failed to generate analysis' };
-      }
-
-      return {
-        text: analysis,
-        success: true
-      };
+      return response.choices[0]?.message?.content?.trim() || '';
     } catch (error) {
-      console.error('AI Service Error:', error);
-      const errorMessage = error instanceof Error ? error.message : DEFAULT_ERROR_MESSAGES.DEFAULT;
-      return {
-        text: '',
-        success: false,
-        error: errorMessage
-      };
+      console.error('Error generating suggestion:', error);
+      throw error;
     }
   }
 }

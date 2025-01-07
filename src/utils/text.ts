@@ -1,138 +1,159 @@
-import type { Language, TextStyle, PolishOptions, PolishResult, TextChange } from './text/types';
-import { PATTERNS } from './patterns';
-import { englishRules } from './text/rules';
-import { convertWrittenNumbers } from './numbers';
+// src/utils/text.ts
 
-// Single source of truth for text polishing
+import { Language, TextStyle, PolishOptions, PolishResult, TextChange, BaseResult } from './types';
+
+const recordChange = (
+  changes: TextChange[],
+  original: string,
+  modified: string,
+  position: number,
+  reason: string,
+  confidence: number
+): void => {
+  changes.push({
+    original,
+    modified,
+    position,
+    reason,
+    confidence
+  });
+};
+
 export async function polishText(
   text: string,
   options: PolishOptions = {}
 ): Promise<PolishResult> {
+  if (!text?.trim()) {
+    return {
+      text: '',
+      changes: [],
+      aiAssisted: false,
+      confidence: 1,
+      language: options.language || Language.English
+    };
+  }
+
+  const defaultOptions: PolishOptions = {
+    fixPunctuation: true,
+    capitalizeFirst: true,
+    removeFillers: false,
+    convertNumbers: false,
+    improveGrammar: false,
+    language: Language.English,
+    aiAssist: false,
+    textStyle: TextStyle.Casual,
+    maxRetries: 3
+  };
+
   try {
-    if (!text?.trim()) {
-      return createEmptyResult();
+    const mergedOptions = { ...defaultOptions, ...options };
+    const changes: TextChange[] = [];
+    let processedText = text;
+    let currentPosition = 0;
+
+    // Basic cleanup
+    const originalText = processedText;
+    processedText = processedText.trim().replace(/\s+/g, ' ');
+    
+    if (processedText !== originalText) {
+      recordChange(
+        changes,
+        originalText,
+        processedText,
+        currentPosition,
+        'Basic cleanup',
+        1
+      );
+      currentPosition = 0; // Reset position after cleanup
     }
 
-    const {
-      fixPunctuation = true,
-      capitalizeFirst = true,
-      removeFillers = true,
-      convertNumbers = true,
-      improveGrammar = false,
-      language = Language.English,
-      aiAssist = false,
-      textStyle = TextStyle.Formal,
-      customStyleGuides
-    } = options;
-
-    const rules = englishRules;
-    const changes: TextChange[] = [];
-    let confidence = rules.confidenceMetrics.baseScore;
-    let errorCount = 0;
-    let result = text;
-
-    // Process text in chunks for better handling of large texts
-    const chunks = splitIntoSentences(result);
-    result = chunks.map(chunk => {
-      let processed = chunk;
-
-      // Remove multiple spaces
-      processed = processed.replace(PATTERNS.multipleSpaces, ' ');
+    // Capitalize first letter if enabled
+    if (mergedOptions.capitalizeFirst && processedText.length > 0) {
+      const originalFirst = processedText;
+      processedText = processedText.charAt(0).toUpperCase() + processedText.slice(1);
       
-      // Fix sentence boundaries and capitalization
-      if (capitalizeFirst) {
-        processed = processed.replace(PATTERNS.sentenceBoundary, (_, punctuation, letter) => 
-          `${punctuation} ${letter.toUpperCase()}`
+      if (processedText !== originalFirst) {
+        recordChange(
+          changes,
+          originalFirst,
+          processedText,
+          0,
+          'Capitalized first letter',
+          1
         );
-        processed = processed.charAt(0).toUpperCase() + processed.slice(1);
       }
+    }
 
-      // Remove filler words
-      if (removeFillers) {
-        const originalText = processed;
-        processed = processed.replace(rules.fillerWords, '');
-        if (originalText !== processed) {
-          recordChange(changes, originalText, processed, 'Removed filler words', 0.9);
-          errorCount++;
-        }
+    // Fix punctuation if enabled
+    if (mergedOptions.fixPunctuation) {
+      const originalPunct = processedText;
+      
+      // Add period if missing at the end
+      if (!/[.!?]$/.test(processedText)) {
+        processedText += '.';
       }
-
-      // Fix punctuation
-      if (fixPunctuation) {
-        const originalText = processed;
-        rules.punctuationRules.forEach(([pattern, replacement]) => {
-          processed = processed.replace(pattern, replacement);
-        });
-        if (originalText !== processed) {
-          recordChange(changes, originalText, processed, 'Fixed punctuation', 0.95);
-          errorCount++;
-        }
+      
+      // Fix common punctuation issues
+      processedText = processedText
+        .replace(/\s+([.,!?])/g, '$1')
+        .replace(/([.,!?])(?=[A-Za-z])/g, '$1 ');
+      
+      if (processedText !== originalPunct) {
+        recordChange(
+          changes,
+          originalPunct,
+          processedText,
+          originalPunct.length - 1,
+          'Fixed punctuation',
+          0.95
+        );
       }
+    }
 
-      // Convert numbers
-      if (convertNumbers) {
-        const originalText = processed;
-        const { text: converted, changes: numberChanges } = convertWrittenNumbers(processed);
-        processed = converted;
-        if (numberChanges > 0) {
-          recordChange(changes, originalText, processed, 'Converted numbers', 0.95);
-          errorCount++;
-        }
-      }
-
-      // Apply style guides
-      if (textStyle && rules.styleGuides[textStyle]) {
-        const originalText = processed;
-        for (const [pattern, replacement] of rules.styleGuides[textStyle]) {
-          processed = processed.replace(pattern, replacement);
-        }
-        if (originalText !== processed) {
-          recordChange(changes, originalText, processed, `Applied ${textStyle} style`, 0.9);
-          errorCount++;
-        }
-      }
-
-      // Apply custom style guides if provided
-      if (customStyleGuides?.length) {
-        const originalText = processed;
-        for (const [pattern, replacement] of customStyleGuides) {
-          processed = processed.replace(pattern, replacement);
-        }
-        if (originalText !== processed) {
-          recordChange(changes, originalText, processed, 'Applied custom style', 0.9);
-          errorCount++;
-        }
-      }
-
-      return processed;
-    }).join(' ');
-
-    // Calculate final confidence
-    const finalConfidence = Math.max(
-      0,
-      confidence - (errorCount * rules.confidenceMetrics.penaltyPerError)
-    );
+    // Calculate final confidence score
+    const confidence = changes.reduce((acc, change) => Math.min(acc, change.confidence), 1);
 
     return {
-      text: result.trim(),
+      text: processedText,
       changes,
-      aiAssisted: false,
-      confidence: finalConfidence,
-      language
+      aiAssisted: Boolean(mergedOptions.aiAssist && changes.length > 0),
+      confidence,
+      language: mergedOptions.language
     };
   } catch (error) {
     console.error('Error in polishText:', error);
-    return createEmptyResult(text, language);
+    return {
+      text: text.trim(),
+      changes: [],
+      aiAssisted: false,
+      confidence: 1,
+      language: options.language || Language.English
+    };
   }
 }
 
-// Export a simpler version for basic text cleanup
-export function cleanText(text: string): Promise<string> {
-  return polishText(text, {
-    fixPunctuation: true,
-    capitalizeFirst: true,
-    removeFillers: true,
-    convertNumbers: false,
-    textStyle: TextStyle.Formal
-  }).then(result => result.text);
+// Helper function for basic text cleanup
+export async function cleanText(
+  text: string,
+  language: Language = Language.English
+): Promise<BaseResult & { text: string }> {
+  try {
+    const result = await polishText(text, {
+      fixPunctuation: true,
+      capitalizeFirst: true,
+      language,
+      textStyle: TextStyle.Casual
+    });
+    
+    return {
+      success: true,
+      text: result.text
+    };
+  } catch (error) {
+    return {
+      success: false,
+      text: text.trim(),
+      error: 'Failed to clean text'
+    };
+  }
 }

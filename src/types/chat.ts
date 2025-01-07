@@ -1,6 +1,22 @@
 // src/types/chat.ts
 
 import type { FirebaseFirestore } from '@firebase/firestore-types';
+import type { StoryElement } from './analysis';
+
+export interface StoryContext {
+  content: string;
+  metadata: {
+    title: string;
+    year?: number;
+    tags: string[];
+    characters: Array<{
+      name: string;
+      relation: string;
+    }>;
+  };
+  recentAnalysis?: StoryElement[];
+  lastUpdated?: number;
+}
 
 export interface Message {
   id: string;
@@ -52,14 +68,26 @@ export type ContextUpdateAction =
 export interface ChatState {
   messages: Message[];
   initialized: boolean;
+  storyContext: StoryContext;
   loading: boolean;
   error: string | null;
 }
 
 export interface ChatActions {
   sendMessage: (message: Message) => void;
+  setStoryContext: (context: Partial<StoryContext>) => void;
+  updateStoryContent: (content: string) => void;
+  updateStoryMetadata: (metadata: Partial<StoryContext['metadata']>) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearMessages: () => void;
   setInitialized: (initialized: boolean) => void;
+}
+
+export interface AIAssistantState {
+  activeTab: 'suggestions' | 'analysis';
+  suggestions: string[];
+  appliedSuggestions: string[];
+  setActiveTab: (tab: 'suggestions' | 'analysis') => void;
+  generateSuggestions: () => Promise<void>;
 }

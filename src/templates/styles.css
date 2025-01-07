@@ -1,0 +1,46 @@
+.ResizeHandleOuter {
+  flex: 0 0 12px;
+  position: relative;
+  outline: none;
+  cursor: col-resize;
+  transition: background-color 0.2s;
+  margin: 0 -4px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.ResizeHandleOuter.horizontal {
+  cursor: row-resize;
+  margin: -4px 0;
+}
+
+.ResizeHandleOuter[data-resize-handle-active] {
+  background-color: rgba(75, 35, 232, 0.2);
+}
+
+.ResizeHandleInner {
+  position: absolute;
+  width: 2px;
+  height: 24px;
+  border-radius: 9999px;
+  background-color: rgba(255, 255, 255, 0.12);
+  transition: background-color 0.2s;
+}
+
+.horizontal .ResizeHandleInner {
+  width: 24px;
+  height: 2px;
+}
+
+.ResizeHandleOuter:hover .ResizeHandleInner {
+  background-color: rgba(75, 35, 232, 0.6);
+  box-shadow: 0 0 8px rgba(75, 35, 232, 0.4);
+}
+
+.ResizeHandleOuter[data-resize-handle-active] .ResizeHandleInner {
+  background-color: rgb(75, 35, 232);
+  box-shadow: 0 0 12px rgba(75, 35, 232, 0.6);
+}

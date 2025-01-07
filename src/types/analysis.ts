@@ -40,6 +40,15 @@ export interface FollowUpQuestion {
 }
 
 // Complete Analysis Result
+export interface StoryAnalysis {
+  success: boolean;
+  error?: string;
+  analysis?: string;
+  elements: Record<ElementType, MemoryElement[]>;
+  suggestions: string[];
+  missingContexts: string[];
+}
+
 export interface AnalysisResult {
   elements: {
     [K in ElementType]: MemoryElement[];

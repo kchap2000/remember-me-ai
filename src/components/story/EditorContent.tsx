@@ -1,15 +1,43 @@
 import React, { useRef, useState, useCallback } from 'react';
-import { Mic, Lightbulb, UserPlus, ChevronLeft, BookOpen, Trash2, Sparkles } from 'lucide-react';
-import { polishText } from '../../utils/text';
-import { TextStyle } from '../../utils/types';
+import { Mic, Lightbulb, UserPlus, ChevronLeft, BookOpen, Trash2, Sparkles, RotateCcw, RotateCw } from 'lucide-react';
+import { aiService } from '../../services/ai.service';
 import { cn } from '../../styles';
 import { useNavigate } from 'react-router-dom';
+import { connectionsService } from '../../services/connections.service';
+
 import { YearSelector } from './YearSelector';
 import { TagInput } from './TagInput';
 import { VoiceRecorder } from './VoiceRecorder';
 import { ConnectionSuggestion } from './ConnectionSuggestion';
 
-// ... [Previous interfaces remain the same]
+interface EditorContentProps {
+  className?: string;
+  content: string;
+  title: string;
+  setTitle: (title: string) => void;
+  onExit: () => void;
+  selectedYear: number;
+  setSelectedYear: (year: number) => void;
+  birthYear: number | null;
+  tags: string[];
+  setTags: (tags: string[]) => void;
+  onContentChange: (content: string, reason?: string) => void;
+  onTranscription: (text: string) => void;
+  suggestedConnections: string[];
+  onAddConnection: (data: { name: string; relationship: string }) => void;
+  onIgnoreConnection: (name: string) => void;
+  onRequestAISuggestion: () => void;
+  onShowAddConnection: () => void;
+  onSave: () => void;
+  onDelete: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  isSaving: boolean;
+  hasUnsavedChanges: boolean;
+  wordCount: number;
+}
 
 export function EditorContent({
   className = '',
@@ -21,15 +49,20 @@ export function EditorContent({
   birthYear,
   tags,
   setTags,
-  setContent,
+  onContentChange,
   onTranscription,
   suggestedConnections,
+  onExit,
   onAddConnection,
   onIgnoreConnection,
   onRequestAISuggestion,
   onShowAddConnection,
   onSave,
   onDelete,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
   isSaving,
   hasUnsavedChanges,
   wordCount
@@ -45,7 +78,7 @@ export function EditorContent({
       const end = textareaRef.current?.selectionEnd || 0;
 
       const newValue = content.substring(0, start) + '  ' + content.substring(end);
-      setContent(newValue);
+      onContentChange(newValue, 'Tab indent');
 
       // Set cursor position after timeout to ensure state update
       setTimeout(() => {
@@ -54,43 +87,48 @@ export function EditorContent({
         }
       }, 0);
     }
-  }, [content, setContent]);
+  }, [content, onContentChange]);
 
   const handlePolishText = useCallback(async () => {
     if (!content.trim() || isPolishing) return;
     
+    const selectionStart = textareaRef.current?.selectionStart || 0;
+    const selectionEnd = textareaRef.current?.selectionEnd || 0;
+    
     setIsPolishing(true);
     try {
-      const result = await polishText(content, {
-        fixPunctuation: true,
-        capitalizeFirst: true,
-        removeFillers: true,
-        convertNumbers: true,
-        improveGrammar: true,
-        textStyle: TextStyle.Formal
-      });
+      const result = await aiService.polishText(content);
       
-      if (result.text) {
-        setContent(result.text);
+      if (result.success) {
+        onContentChange(result.text, 'Polish text');
+        
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.selectionStart = selectionStart;
+            textareaRef.current.selectionEnd = selectionEnd;
+            textareaRef.current.focus();
+          }
+        }, 0);
+      } else if (result.error) {
+        console.error('Failed to polish text:', result.error);
       }
     } catch (error) {
       console.error('Error polishing text:', error);
-      // Optionally show error to user
     } finally {
       setIsPolishing(false);
     }
-  }, [content, setContent, isPolishing]);
+  }, [content, onContentChange, isPolishing]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative rounded-lg bg-gradient-surface">
       {/* Header with Title and Controls */}
       <div className={cn(
         "sticky top-0 z-40 p-6 border-b border-border-subtle",
-        "bg-gradient-surface"
+        "bg-gradient-surface rounded-t-lg"
       )}>
         <div className="flex flex-wrap items-center gap-4 mb-6">
           <button
-            onClick={() => navigate('/')}
+            onClick={onExit}
             className={cn(
               "flex items-center gap-2 px-3 py-1.5 rounded-lg",
               "text-text-tertiary hover:text-text-primary",
@@ -98,7 +136,7 @@ export function EditorContent({
             )}
           >
             <ChevronLeft size={20} />
-            <span>Back</span>
+            <span>Return to Dashboard</span>
           </button>
 
           <div className="flex items-center gap-3 flex-1 min-w-[200px]">
@@ -161,11 +199,11 @@ export function EditorContent({
       </div>
 
       {/* Story Content Area */}
-      <div className="flex-1 relative">
+      <div className="flex-1 relative pb-24">
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(e) => onContentChange(e.target.value, 'User input')}
           onKeyDown={handleKeyDown}
           placeholder="Write your story here..."
           className="w-full h-full p-6 bg-transparent text-text-primary rounded-lg
@@ -200,6 +238,33 @@ export function EditorContent({
           />
 
           <div className="flex-1 flex flex-wrap items-center justify-end gap-4">
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg",
+                "text-text-tertiary hover:text-text-primary",
+                "hover:bg-bg-tertiary/50 transition-all duration-200",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+            >
+              <RotateCcw size={20} />
+              <span>Undo</span>
+            </button>
+
+            <button
+              onClick={onRedo}
+              disabled={!canRedo}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg",
+                "text-text-tertiary hover:text-text-primary",
+                "hover:bg-bg-tertiary/50 transition-all duration-200",
+                "disabled:opacity-50 disabled:cursor-not-allowed"
+              )}
+            >
+              <RotateCw size={20} />
+              <span>Redo</span>
+            </button>
             <button
               onClick={handlePolishText}
               disabled={isPolishing || !content.trim()}
