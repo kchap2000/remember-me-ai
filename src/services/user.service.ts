@@ -18,10 +18,28 @@ interface UserProfile {
 class UserService {
   async getUserProfile(userId: string): Promise<UserProfile | null> {
     try {
+      if (!userId) {
+        throw new Error('User ID is required');
+      }
+
       const userDoc = await getDoc(doc(db, 'users', userId));
-      return userDoc.exists() ? userDoc.data() as UserProfile : null;
+      
+      if (!userDoc.exists()) {
+        // Return empty profile instead of null to avoid errors
+        return {
+          firstName: '',
+          lastName: '',
+          birthYear: undefined
+        };
+      }
+      
+      return userDoc.data() as UserProfile;
     } catch (error) {
-      console.error('Error fetching user profile:', error);
+      console.error('Error fetching user profile:', {
+        error,
+        userId,
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
       return null;
     }
   }

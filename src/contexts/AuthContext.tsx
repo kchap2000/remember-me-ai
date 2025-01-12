@@ -9,6 +9,8 @@ import {
   browserLocalPersistence
 } from 'firebase/auth';
 import { auth } from '../config/firebase.config';
+import { userService } from '../services/user.service';
+import { usePreferencesStore } from '../store/usePreferencesStore';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -35,8 +37,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Enable persistent auth state
     setPersistence(auth, browserLocalPersistence);
-    
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          // Load user profile and set birth year if available
+          const profile = await userService.getUserProfile(user.uid);
+          if (profile?.birthYear) {
+            usePreferencesStore.getState().setBirthYear(profile.birthYear);
+          }
+        } catch (error) {
+          console.error('Error loading user profile:', error);
+        }
+      }
       setCurrentUser(user);
       setLoading(false);
     });
