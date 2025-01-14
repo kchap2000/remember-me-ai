@@ -94,6 +94,7 @@ export function ConnectionsPanel({
           <ConnectionDetail
             connection={selectedConnection}
             onBack={() => setSelectedConnection(null)}
+            storyId={storyId}
           />
         ) : (
           <ConnectionsList

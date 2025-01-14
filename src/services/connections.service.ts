@@ -2,13 +2,15 @@ import { db } from '../config/firebase.config';
 import {
   collection,
   doc,
+  deleteDoc,
   setDoc,
   getDoc,
   query,
   where,
   getDocs,
   serverTimestamp,
-  arrayUnion
+  arrayUnion,
+  arrayRemove
 } from 'firebase/firestore';
 import type { Connection, Story } from '../types';
 
@@ -166,6 +168,7 @@ class ConnectionsService {
   async getUserConnections(userId: string): Promise<Connection[]> {
     try {
       const connectionsRef = collection(db, 'connections');
+      
       const q = query(connectionsRef, where('userId', '==', userId));
 
       const snapshot = await getDocs(q);
@@ -189,6 +192,70 @@ class ConnectionsService {
     }
   }
 
+  async deleteConnection(connectionId: string): Promise<void> {
+    try {
+      // 1. Get the connection to find associated stories
+      const connectionRef = doc(db, 'connections', connectionId);
+      const connectionDoc = await getDoc(connectionRef);
+      
+      if (!connectionDoc.exists()) {
+        throw new Error('Connection not found');
+      }
+      
+      const connection = connectionDoc.data();
+      
+      // 2. Remove connection reference from all associated stories
+      const storyUpdates = connection.stories.map(async (story: any) => {
+        const storyRef = doc(db, 'stories', story.storyId);
+        return setDoc(storyRef, {
+          connections: arrayRemove(connectionId)
+        }, { merge: true });
+      });
+      
+      // 3. Wait for all story updates to complete
+      await Promise.all(storyUpdates);
+      
+      // 4. Delete the connection document
+      await deleteDoc(connectionRef);
+    } catch (error) {
+      console.error('Error deleting connection:', error);
+      throw error;
+    }
+  }
+
+  async removeConnectionFromStory(storyId: string, connectionId: string): Promise<void> {
+    try {
+      // 1. Update the story document to remove the connection
+      const storyRef = doc(db, 'stories', storyId);
+      await setDoc(storyRef, {
+        connections: arrayRemove(connectionId)
+      }, { merge: true });
+      
+      // 2. Update the connection document to remove the story
+      const connectionRef = doc(db, 'connections', connectionId);
+      const connectionDoc = await getDoc(connectionRef);
+      
+      if (connectionDoc.exists()) {
+        const connection = connectionDoc.data();
+        const updatedStories = connection.stories.filter(
+          (s: any) => s.storyId !== storyId
+        );
+        
+        if (updatedStories.length === 0) {
+          // If this was the last story, delete the entire connection
+          await deleteDoc(connectionRef);
+        } else {
+          // Otherwise, update the stories array
+          await setDoc(connectionRef, {
+            stories: updatedStories
+          }, { merge: true });
+        }
+      }
+    } catch (error) {
+      console.error('Error removing connection from story:', error);
+      throw error;
+    }
+  }
   async detectConnectionsInContent(content: string, userId: string): Promise<string[]> {
     if (!content?.trim() || !userId) return [];
 

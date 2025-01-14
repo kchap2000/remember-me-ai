@@ -14,6 +14,8 @@ interface ConnectionsState {
  fetchUserConnections: (userId: string) => Promise<void>;
  fetchStoryConnections: (storyId: string) => Promise<void>; 
  setSelectedConnection: (connection: Connection | null) => void;
+ deleteConnection: (connectionId: string) => Promise<void>;
+ removeConnectionFromStory: (storyId: string, connectionId: string) => Promise<void>;
  addConnectionToStory: (
    userId: string,
    storyId: string,
@@ -81,6 +83,38 @@ export const useConnectionsStore = create<ConnectionsState>()(
          
        } catch (error) {
          set({ error: 'Failed to add connection', loading: false });
+       }
+     },
+
+     deleteConnection: async (connectionId: string) => {
+       set({ loading: true, error: null });
+       try {
+         await connectionsService.deleteConnection(connectionId);
+         
+         // Update local state
+         set(state => ({
+           connections: state.connections.filter(c => c.id !== connectionId),
+           storyConnections: state.storyConnections.filter(c => c.id !== connectionId),
+           selectedConnection: null,
+           loading: false
+         }));
+       } catch (error) {
+         set({ error: 'Failed to delete connection', loading: false });
+       }
+     },
+
+     removeConnectionFromStory: async (storyId: string, connectionId: string) => {
+       set({ loading: true, error: null });
+       try {
+         await connectionsService.removeConnectionFromStory(storyId, connectionId);
+         
+         // Update local state
+         set(state => ({
+           storyConnections: state.storyConnections.filter(c => c.id !== connectionId),
+           loading: false
+         }));
+       } catch (error) {
+         set({ error: 'Failed to remove connection from story', loading: false });
        }
      },
 
