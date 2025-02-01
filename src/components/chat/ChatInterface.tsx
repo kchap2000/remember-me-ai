@@ -1,15 +1,17 @@
-import React, { useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Sparkles, MessageCircle, ArrowUpCircle, Trash2 } from 'lucide-react';
 import { ChatMessage } from './ChatMessage';
 import { ChatInput } from './ChatInput';
 import { useAuth } from '../../contexts/AuthContext';
 import { useChatStore } from '../../store/useChatStore';
-import { aiService } from '../../services/ai';
+import { StoryReviewModal } from '../story/StoryReviewModal';
+import { aiService } from '../../services/ai.service';
+import { cn } from '../../utils/cn';
 import type { Message } from '../../types/chat';
 
 interface StoryMetadata {
   id?: string;
   title: string;
-  year: number;
   tags: string[];
   connections: string[];
 }
@@ -27,160 +29,193 @@ export function ChatInterface({
   onSuggestion,
   onUndo
 }: ChatInterfaceProps) {
+  const [isUpdating, setIsUpdating] = useState(false);
   const { currentUser } = useAuth();
-  const { messages, sendMessage, loading, error } = useChatStore();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const initializedRef = useRef<boolean>(false);
+  const { 
+    messages, 
+    clearMessages,
+    storyContext,
+    isInitialized,
+    setStoryContext,
+    sendMessage, 
+    loading, 
+    error,
+    setError,
+    pendingUpdates,
+    setPendingUpdates,
+    setInitialized
+  } = useChatStore(state => ({
+    loading: state.loading,
+    error: state.error,
+    setError: state.setError,
+    messages: state.messages,
+    isInitialized: state.isInitialized,
+    storyContext: state.storyContext,
+    setStoryContext: state.setStoryContext,
+    sendMessage: state.sendMessage,
+    pendingUpdates: state.pendingUpdates,
+    setPendingUpdates: state.setPendingUpdates,
+    setInitialized: state.setInitialized
+  }));
 
-  // Memoize story analysis to prevent unnecessary recalculations
-  const storyAnalysis = useMemo(() => {
-    const wordCount = storyContent.trim().split(/\s+/).length;
-    const summary = storyContent.length > 500 
-      ? `${storyContent.slice(0, 500)}...` 
-      : storyContent;
-    
-    return {
-      wordCount,
-      summary,
-      formattedAnalysis: `Your story is ${wordCount} words long. Here's a brief analysis:\n\n` +
-        `Title: ${storyMetadata.title}\n` +
-        `Year: ${storyMetadata.year}\n` +
-        `Tags: ${storyMetadata.tags.join(', ')}\n\n` +
-        `Current content: ${summary}`
-    };
-  }, [storyContent, storyMetadata]);
-
-  const scrollToBottom = useCallback(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, []);
-
-  // Initialize chat with welcome message
+  // Send initial greeting when component mounts
   useEffect(() => {
-    if (!initializedRef.current && currentUser) {
-      initializedRef.current = true;
-      const userName = currentUser.displayName?.split(' ')[0] || 'there';
-
-      const welcomeMessage: Message = {
+    if (!isInitialized && storyContext.content) {
+      sendMessage({
         id: Date.now().toString(),
-        content: `Hey ${userName}! Let me know if you need any help with your story.`,
-        sender: 'ai',
-        timestamp: new Date()
-      };
-
-      sendMessage(welcomeMessage);
+        content: '',
+        sender: 'user',
+        timestamp: new Date(), 
+        isGreeting: true
+      });
+      setInitialized(true);
     }
-  }, [currentUser, sendMessage]);
+  }, [isInitialized, storyContext.content, sendMessage, setInitialized]);
 
-  // Auto-scroll to bottom when messages change
+  // Update story context when props change
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+    setStoryContext({
+      content: storyContent,
+      metadata: {
+        title: storyMetadata.title,
+        tags: storyMetadata.tags || [],
+        characters: []
+      }
+    });
+  }, [storyContent, storyMetadata, setStoryContext]);
 
-  // Extract location from story content using regex
-  const extractLocation = useCallback((content: string): string | undefined => {
-    const locationMatch = content.match(/\b(?:in|at)\s+([A-Za-z\s,]+)/i);
-    return locationMatch?.[1];
-  }, []);
-
-  const generateAIResponse = useCallback(async (
-    userContent: string,
-    isGeneralQuery: boolean
-  ): Promise<string> => {
-    try {
-      if (isGeneralQuery) {
-        const result = await aiService.getGeneralKnowledge(userContent, {
-          year: storyMetadata.year,
-          location: extractLocation(storyContent)
-        });
-        return result.text;
-      } 
-      
-      return await aiService.generateSuggestion(userContent);
-    } catch (error) {
-      console.error('Error generating AI response:', error);
-      throw new Error('Failed to generate response');
-    }
-  }, [storyMetadata.year, storyContent, extractLocation]);
-
-  const handleMessageSend = useCallback(async (content: string) => {
-    const trimmedContent = content.trim();
-    if (!trimmedContent) return;
-    
-    // Create and send user message
-    const userMessage: Message = {
+  const handleMessageSubmit = useCallback(async (content: string) => {
+    if (!content.trim()) return;
+    // Add user message to chat
+    sendMessage({
       id: Date.now().toString(),
-      content: trimmedContent,
+      content: content.trim(),
       sender: 'user',
       timestamp: new Date()
-    };
-    sendMessage(userMessage);
+    });
+  }, [sendMessage]);
+
+  /**
+   * Uses LangChain memory (not manual slicing of messages).
+   * We still capture the entire chat for the modal's display only.
+   */
+  const handleUpdateStory = useCallback(async () => {
+    if (messages.length === 0) return;
+    setIsUpdating(true);
+    setError(null);
+
+    // Get the last 5 messages for context
+    const recentMessages = messages.slice(-5);
+    const chatContext = recentMessages
+      .map(m => `${m.sender === 'user' ? 'User' : 'AI'}: ${m.content}`)
+      .join('\n');
 
     try {
-      // Process message through unified AI service
-      const response = await aiService.processMessage(trimmedContent, {
+      const response = await aiService.processMessage('', {
         storyContent,
-        year: storyMetadata.year,
-        location: extractLocation(storyContent)
+        messageHistory: recentMessages,
+        updateMode: true
       });
 
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to process message');
+      if (response.success && response.text) {
+        setPendingUpdates({
+          originalContent: storyContent,
+          updatedContent: response.text,
+          chatContext
+        });
+      } else {
+        throw new Error(response.error || 'Failed to generate story update');
       }
-
-      // Send AI response
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: response.text,
-        sender: 'ai',
-        timestamp: new Date()
-      };
-      sendMessage(aiMessage);
-
     } catch (error) {
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: 'Sorry, I encountered an error analyzing your story. Please try again.',
-        sender: 'ai',
-        timestamp: new Date()
-      };
-      sendMessage(errorMessage);
+      console.error('Error updating story:', error);
+      setError('Failed to update story. Please try again.');
+    } finally {
+      setIsUpdating(false);
     }
-  }, [sendMessage, storyAnalysis, generateAIResponse]);
+  }, [messages, storyContent, setPendingUpdates, setError]);
 
   return (
     <div className="relative flex flex-col h-full transition-all duration-300">
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-4">
+      {/* Header */}
+      <div className="sticky top-0 z-10 flex items-center gap-4 p-4 
+        bg-background-secondary/95 backdrop-blur-sm border-b border-border-subtle">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-accent-primary" />
+          <h2 className="text-lg font-semibold text-text-primary">AI Writing Assistant</h2>
+          {messages.length > 0 && (
+            <button
+              onClick={() => {
+                if (window.confirm('Are you sure you want to clear the chat history?')) {
+                  clearMessages();
+                }
+              }}
+              className={cn(
+                "ml-4 p-1.5 rounded-lg transition-colors",
+                "text-text-tertiary hover:text-accent-error",
+                "hover:bg-accent-error/10"
+              )}
+              title="Clear chat history"
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
+        {messages.length > 0 && (
+          <button
+            onClick={handleUpdateStory}
+            disabled={isUpdating}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-lg",
+              "bg-accent-primary text-white",
+              "hover:bg-accent-primary/90 transition-colors",
+              "disabled:opacity-50 disabled:cursor-not-allowed"
+            )}
+          >
+            {isUpdating ? (
+              <>
+                <ArrowUpCircle size={16} className="animate-spin" />
+                <span>Updating...</span>
+              </>
+            ) : (
+              <>
+                <ArrowUpCircle size={16} />
+                <span>Update Story</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="space-y-4">
           {messages.map(message => (
             <ChatMessage
               key={message.id}
               message={message}
             />
           ))}
-          <div ref={messagesEndRef} />
         </div>
       </div>
-      
-      {/* Chat Input Area */}
-      <div className="sticky bottom-0 left-0 right-0 bg-[#16133f]/95 
-                    backdrop-blur-sm border-t border-[#2b2938]/50 rounded-b-lg
-                    shadow-[0_-4px_16px_-4px_rgba(0,0,0,0.2)]">
+
+      {/* Chat Input */}
+      <div className="sticky bottom-0 left-0 right-0 p-4 
+        bg-background-secondary/95 backdrop-blur-sm 
+        border-t border-border-subtle">
         <ChatInput 
-          onSend={handleMessageSend}
+          onSend={handleMessageSubmit}
           disabled={loading}
+          placeholder="Ask me about your story or request suggestions..."
         />
       </div>
-      
+
       {/* Loading Overlay */}
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-          <p className="text-gray-200 px-4 py-2">Loading...</p>
+          <p className="text-gray-200 px-4 py-2">Thinking...</p>
         </div>
       )}
-      
+
       {/* Error Message */}
       {error && (
         <div className="absolute bottom-0 left-0 right-0 p-2 bg-red-500/90">

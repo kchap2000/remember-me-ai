@@ -32,7 +32,8 @@ export function ConnectionsPanel({
     connections,
     storyConnections,
     fetchUserConnections,
-    fetchStoryConnections
+    fetchStoryConnections,
+    addConnectionToStory
   } = useConnectionsStore();
 
   // Load connections on mount or when storyId/userId changes
@@ -58,11 +59,32 @@ export function ConnectionsPanel({
     loadConnections();
   }, [storyId, userId, fetchStoryConnections, fetchUserConnections]);
 
-  const handleAddConnection = (data: { name: string; relationship: string }) => {
+  const handleAddConnection = async (data: { name: string; relationship: string }) => {
+    setError(null);
+    
+    if (!storyId || !userId) {
+      setError('Missing required data');
+      return;
+    }
+
     try {
+      const storyTitle = document.title || 'Untitled Story';
+      const currentYear = new Date().getFullYear();
+
+      // Add the connection
+      await addConnectionToStory(userId, storyId, {
+        name: data.name,
+        relationship: data.relationship,
+        year: currentYear,
+        phaseId: 'default',
+        storyTitle
+      });
+      
+      // Call the onAddConnection callback if provided
       if (onAddConnection) {
         onAddConnection(data);
       }
+      
       setShowAddModal(false);
     } catch (err) {
       console.error('Error adding connection:', err);

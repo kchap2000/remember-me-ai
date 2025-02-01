@@ -115,8 +115,20 @@ export function Timeline() {
     }
   }, [currentUser, birthYear, generateTimeline, updateTimelineStories]);
 
-  const handleBirthYearSubmit = (year: number) => {
-    setBirthYear(year);
+  const handleBirthYearSubmit = async (year: number) => {
+    try {
+      // Save to local store
+      setBirthYear(year);
+      
+      // Save to Firebase profile if user is logged in
+      if (currentUser?.uid) {
+        await userService.updateUserProfile(currentUser.uid, {
+          birthYear: year
+        });
+      }
+    } catch (error) {
+      console.error('Error saving birth year:', error);
+    }
     setShowBirthYearModal(false);
   };
 

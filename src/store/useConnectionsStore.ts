@@ -67,23 +67,55 @@ export const useConnectionsStore = create<ConnectionsState>()(
      addConnectionToStory: async (userId, storyId, data) => {
        set({ loading: true, error: null });
        try {
-         const newConnection = await connectionsService.addConnectionToStory(
-           userId,
-           storyId,
-           data
-         );
-         
-         // Update both user and story connections
-         const { connections, storyConnections } = get();
-         set({
-           connections: [...connections, newConnection],
-           storyConnections: [...storyConnections, newConnection],
-           loading: false
-         });
-         
-       } catch (error) {
-         set({ error: 'Failed to add connection', loading: false });
-       }
+        // Optimistic update
+        const optimisticConnection = {
+          id: `temp-${Date.now()}`,
+          name: data.name,
+          relationship: data.relationship,
+          firstAppearance: {
+            storyId,
+            storyTitle: data.storyTitle,
+            year: data.year,
+            phaseId: data.phaseId
+          },
+          stories: [{
+            storyId,
+            title: data.storyTitle,
+            year: data.year
+          }]
+        };
+
+        // Update UI immediately
+        set(state => ({
+          storyConnections: [...state.storyConnections, optimisticConnection]
+        }));
+
+        // Make API call
+        const newConnection = await connectionsService.addConnectionToStory(
+          userId,
+          storyId,
+          data
+        );
+        
+        // Update with real data
+        set(state => ({
+          storyConnections: state.storyConnections
+            .filter(c => c.id !== optimisticConnection.id)
+            .concat(newConnection),
+          connections: [...state.connections, newConnection],
+          loading: false
+        }));
+        
+      } catch (error) {
+        // Revert optimistic update on error
+        set(state => ({
+          storyConnections: state.storyConnections.filter(c => !c.id.startsWith('temp-')),
+          error: 'Failed to add connection',
+          loading: false
+        }));
+        console.error('Error adding connection:', error);
+        throw error;
+      }
      },
 
      deleteConnection: async (connectionId: string) => {

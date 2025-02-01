@@ -44,6 +44,10 @@ class ConnectionsService {
       storyTitle: string;
     }
   ) {
+    if (!userId || !storyId) {
+      throw new Error('Missing required parameters');
+    }
+
     console.log('Adding connection to story:', { userId, storyId, connectionData });
 
     // Check if connection already exists

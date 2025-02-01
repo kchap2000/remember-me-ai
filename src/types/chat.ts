@@ -17,12 +17,19 @@ export interface StoryContext {
   recentAnalysis?: StoryElement[];
   lastUpdated?: number;
 }
+export interface AnalysisContext {
+  analysis: string;
+  elements: Record<string, any>;
+  themes: string[];
+  timestamp: number;
+}
 
 export interface Message {
   id: string;
   content: string;
   sender: 'user' | 'ai';
   timestamp: Date | FirebaseFirestore.Timestamp;
+  isGreeting?: boolean;
   quickReplies?: QuickReply[];
 }
 
@@ -48,6 +55,7 @@ export interface ConversationContext {
     people?: string[];
     emotions?: string[];
   };
+  analysisContext?: AnalysisContext;
   userPreferences: {
     detailLevel: 'brief' | 'detailed';
     tone: 'casual' | 'formal';

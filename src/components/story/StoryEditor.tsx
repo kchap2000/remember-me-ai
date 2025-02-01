@@ -11,11 +11,15 @@ import { Card } from '../layout/Card';
 import { DeleteConfirmModal } from '../common/DeleteConfirmModal';
 import { EditorContent } from './EditorContent';
 import { AddConnectionModal } from './AddConnectionModal';
+import { StoryReviewModal } from './StoryReviewModal';
 import { ChatInterface } from '../chat/ChatInterface';
 import { ConnectionsPanel } from '../connections/ConnectionsPanel';
 import { firebaseService } from '../../services/firebase.service';
 import { connectionsService } from '../../services/connections.service';
 import type { ContentHistoryItem, StoryData } from '../../types';
+import { aiService } from '../../services/ai.service';
+import { useChatStore } from '../../store/useChatStore';
+
 
 const DEFAULT_YEAR = new Date().getFullYear();
 
@@ -55,6 +59,7 @@ export function StoryEditor() {
     isDeleting: false,
     showDeleteModal: false,
     showAddConnectionModal: false,
+    showReviewModal: false,
     hasUnsavedChanges: false,
     error: null as string | null
   });
@@ -70,6 +75,10 @@ export function StoryEditor() {
   // Hooks
   const analyzeMemory = useMemoryAnalysis(storyState.storyId);
   useUnsavedChanges(uiState.hasUnsavedChanges);
+
+  // Get pending updates from chat store
+  const pendingUpdates = useChatStore(state => state.pendingUpdates);
+  const setPendingUpdates = useChatStore(state => state.setPendingUpdates);
 
   // Word Count
   const wordCount = React.useMemo(() => {
@@ -270,6 +279,37 @@ export function StoryEditor() {
     [analyzeMemory, storyState.title]
   );
 
+  const handleRequestAISuggestion = useCallback(async () => {
+    if (!storyState.content.trim()) return;
+    
+    if (!import.meta.env.VITE_OPENAI_API_KEY) {
+      setUiState(prev => ({
+        ...prev,
+        error: 'OpenAI API key is not configured. Please add it to your .env file.'
+      }));
+      return;
+    }
+
+    setUiState(prev => ({ ...prev, error: null }));
+    try {
+      const result = await aiService.analyzeStory(storyState.content);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to generate suggestions');
+      }
+      if (result.suggestions?.length > 0) {
+        // Update suggestions in chat store
+        useChatStore.getState().setSuggestions(result.suggestions);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to generate suggestions';
+      console.error('Error getting AI suggestions:', message);
+      setUiState(prev => ({
+        ...prev,
+        error: message
+      }));
+    }
+  }, [storyState.content]);
+
   const handleUndo = useCallback(() => {
     const { text, hasUndo } = undoManager.undo(storyState.content);
     if (hasUndo) {
@@ -457,7 +497,7 @@ return (
                 ignoredConnections: [...prev.ignoredConnections, name]
               }));
             }}
-            onRequestAISuggestion={() => {}}
+            onRequestAISuggestion={handleRequestAISuggestion}
             onShowAddConnection={handleShowAddConnection}
             onSave={() => handleSave(false)}
             onUndo={handleUndo}
@@ -531,6 +571,24 @@ return (
           storyId={storyState.storyId || ''}
           storyTitle={storyState.title}
           selectedYear={storyState.selectedYear}
+        />
+      )}
+
+      {/* Story Review Modal */}
+      {pendingUpdates && (
+        <StoryReviewModal
+          isOpen={Boolean(pendingUpdates)}
+          onClose={() => useChatStore.getState().setPendingUpdates(null)}
+          originalContent={pendingUpdates.originalContent}
+          updatedContent={pendingUpdates.updatedContent}
+          chatContext={pendingUpdates.chatContext}
+          onAccept={(content) => {
+            handleContentChange(content, 'AI Update');
+            setPendingUpdates(null);
+          }}
+          onReject={() => {
+            setPendingUpdates(null);
+          }}
         />
       )}
 

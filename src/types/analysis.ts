@@ -12,10 +12,16 @@ export type QuestionType =
   | 'emotion' 
   | 'timeframe' 
   | 'location_detail' 
-  | 'person_detail';
+  | 'person_detail'
+  | 'emotion_detail'
+  | 'sensory_detail'
+  | 'cause_effect';
 
 // Context Types
 export type ContextType = 'temporal' | 'spatial' | 'personal' | 'emotional' | 'physical';
+
+// Question Priority
+export type QuestionPriority = 'high' | 'medium' | 'low';
 
 // Base Memory Element
 export interface MemoryElement {
@@ -35,8 +41,10 @@ export interface FollowUpQuestion {
   type: QuestionType;
   text: string;
   context: ContextType;
-  priority?: number;
+  priority?: QuestionPriority;
   relatedElements?: string[];
+  category?: string;
+  answered?: boolean;
 }
 
 // Complete Analysis Result
