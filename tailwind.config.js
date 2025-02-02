@@ -3,6 +3,12 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      // Scrollbar styles
+      scrollbar: {
+        thin: 'thin',
+        thumb: 'thumb',
+        track: 'track',
+      },
      // Screen sizes
      screens: {
        'xs': '360px',
@@ -86,6 +92,8 @@ export default {
     },
   },
   plugins: [
+    // Add scrollbar plugin
+    require('tailwindcss-scrollbar'),
     function({ addUtilities }) {
       const newUtilities = {
         '.text-shadow-sm': {

@@ -1,14 +1,13 @@
-import { BaseMemory, ChatMessageHistory } from 'langchain/memory';
-import { AIMessage, HumanMessage } from 'langchain/schema';
+import { BaseMemory } from '@langchain/core/memory';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { Message } from '../../types/chat';
 
 export class CustomChatMemory extends BaseMemory {
-  private history: ChatMessageHistory;
+  private messages: (AIMessage | HumanMessage)[] = [];
   private messageHistory: Message[] = [];
 
   constructor(messages: Message[] = []) {
     super();
-    this.history = new ChatMessageHistory();
     this.loadMessages(messages);
   }
 
@@ -17,9 +16,8 @@ export class CustomChatMemory extends BaseMemory {
   }
 
   async loadMemoryVariables() {
-    const messages = await this.history.getMessages();
     return {
-      history: messages
+      history: this.messages
     };
   }
 
@@ -27,8 +25,8 @@ export class CustomChatMemory extends BaseMemory {
     const humanMessage = new HumanMessage(inputValues.input);
     const aiMessage = new AIMessage(outputValues.response);
     
-    await this.history.addMessage(humanMessage);
-    await this.history.addMessage(aiMessage);
+    this.messages.push(humanMessage);
+    this.messages.push(aiMessage);
     
     // Save to message history
     this.messageHistory.push({
@@ -46,20 +44,18 @@ export class CustomChatMemory extends BaseMemory {
   }
 
   async clear() {
-    await this.history.clear();
+    this.messages = [];
     this.messageHistory = [];
   }
 
-  private async loadMessages(messages: Message[]) {
-    for (const message of messages) {
+  private loadMessages(messages: Message[]) {
+    messages.forEach(message => {
       if (message.sender === 'user') {
-        const humanMessage = new HumanMessage(message.content);
-        await this.history.addMessage(humanMessage);
+        this.messages.push(new HumanMessage(message.content));
       } else {
-        const aiMessage = new AIMessage(message.content);
-        await this.history.addMessage(aiMessage);
+        this.messages.push(new AIMessage(message.content));
       }
-    }
+    });
     this.messageHistory = messages;
   }
 

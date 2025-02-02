@@ -1,8 +1,10 @@
-import { ConversationChain } from 'langchain/chains';
-import { ChatOpenAI } from 'langchain/chat_models/openai';
-import { BufferMemory, BaseMemory } from 'langchain/memory';
-import { ChatPromptTemplate } from 'langchain/prompts';
-import { BaseMessage, SystemMessage, HumanMessage } from 'langchain/schema';
+import { BaseLanguageModel } from '@langchain/core/language_models/base';
+import { ChatOpenAI } from '@langchain/openai';
+import { BufferMemory, BaseMemory } from '@langchain/core/memory';
+import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { BaseMessage, SystemMessage, HumanMessage } from '@langchain/core/messages';
+import { RunnableSequence } from '@langchain/core/runnables';
+import { StringOutputParser } from '@langchain/core/output_parsers';
 import { PROMPT_TEMPLATES } from '../../config/ai.config';
 import type { StoryContext } from '../../types/chat';
 
@@ -15,7 +17,7 @@ const model = new ChatOpenAI({
 
 // Create unified conversation prompt template
 const createUnifiedPrompt = () => {
-  return ChatPromptTemplate.fromPromptMessages([
+  return ChatPromptTemplate.fromMessages([
     ['system', `You are a supportive AI writing assistant helping users develop their stories 
       through natural conversation. Your name is Muse, and you're passionate about helping people 
       preserve and enhance their memories through storytelling. 
@@ -52,23 +54,17 @@ const createUnifiedPrompt = () => {
 
 // Create story processor with unified chain
 export const createStoryProcessor = async (context: StoryContext, memory?: BaseMemory) => {
-  const chain = new ConversationChain({
-    memory: memory || new BufferMemory({ returnMessages: true }),
-    prompt: createUnifiedPrompt(),
-    llm: model
-  });
+  const prompt = createUnifiedPrompt();
+  const outputParser = new StringOutputParser();
 
-  return {
-    invoke: async ({ input, updateMode = false }) => {
-      // For greeting messages, return only the initial greeting
-      if (input.isGreeting) {
-        return { 
-          content: "Hi! I'm Remo, your writing companion. I'm here to help you capture and develop your stories. I love how every memory has its own unique voice and emotional resonance."
-        };
-      }
-
-      // Format context string
-      const formattedContext = `
+  // Create a chain using RunnableSequence
+  const chain = RunnableSequence.from([
+    {
+      input: (input: { content: string; isGreeting?: boolean }) => {
+        if (input.isGreeting) {
+          return "Send initial greeting";
+        }
+        return `
 Story Context:
 Title: ${context.metadata.title}
 Content: ${context.content}
@@ -79,17 +75,29 @@ Location: ${JSON.stringify(context.metadata.contextualDetails.location)}
 Historical Context: ${JSON.stringify(context.metadata.contextualDetails.historicalContext)}` 
   : ''}
 
-User Message: ${input.content}
+User Message: ${input.content}`;
+      }
+    },
+    prompt,
+    model,
+    outputParser
+  ]);
 
-Instructions: ${updateMode ? 
-  'Generate an updated version of the story incorporating recent feedback.' :
-  'Provide a thoughtful response that helps develop the story further.'}`;
+  return {
+    invoke: async ({ input, updateMode = false }) => {
+      // For greeting messages, return only the initial greeting
+      if (input.isGreeting) {
+        return { 
+          content: "Hi! I'm Muse, your writing companion. I'm here to help you capture and develop your stories. I love how every memory has its own unique voice and emotional resonance."
+        };
+      }
 
-      const response = await chain.call({
-        input: formattedContext
+      const response = await chain.invoke({
+        content: input.content,
+        isGreeting: input.isGreeting
       });
 
-      return { content: response.response };
+      return { content: response };
     }
   };
 };

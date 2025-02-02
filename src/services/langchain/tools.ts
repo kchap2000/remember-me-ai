@@ -1,7 +1,6 @@
-import { Tool } from 'langchain/tools';
+import { Tool } from '@langchain/core/tools';
 import { memoryAnalysis } from '../memory';
 import { connectionsService } from '../connections.service';
-import type { AnalysisResult } from '../../types/analysis';
 
 export class StoryAnalysisTool extends Tool {
   name = 'story_analysis';
